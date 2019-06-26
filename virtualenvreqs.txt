@@ -1,0 +1,29 @@
+# installed
+requests # not used?
+PyYAML # for config file
+webrtcvad # voice activity detector
+bottle # for bottled huckleberry
+scutils==1.1 # logging, latest release 1.2 is broken
+
+PyAudio
+# when installing PyAudio get "fatal error: 'portaudio.h' file not found"
+# solution osx: `brew install portaudio`
+
+
+pypocketsphinx # alternative to pocketsphinx library, works on mac
+# pip install setuptools
+# unable to execute ‘swig’: No such file or directory
+# solution osx: `brew install swig`
+
+okhound
+houndify
+
+
+
+
+# not yet installed
+
+# pyttsx3 # text to speech (voice)
+
+# for osx
+# pyobjc

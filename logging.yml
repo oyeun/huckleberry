@@ -1,0 +1,12 @@
+# mostly default values from scutils LogFactory
+# https://scrapy-cluster.readthedocs.io/en/latest/topics/utils/logfactory.html
+json: False
+stdout: True
+name: 'huckleberry'
+dir: './logs'
+file: 'main.log'
+bytes: 25000000
+backups: 5
+level: 'INFO'
+format: '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
+propagate: False
