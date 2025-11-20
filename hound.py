@@ -77,11 +77,11 @@ class MyListener(houndify.HoundListener):
         self.messages['final'] = response
 
     def onError(self, err):
+        print(err)
         self.status = 'error'
         self.messages['error'] = str(err)
 
     def getState(self):
-        #maybe: {status: -1|1, state: initialized|partial|final|error}
         return {
             'service': 'hound',
             'status': self.status,

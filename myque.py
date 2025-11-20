@@ -8,8 +8,6 @@ class Myque(object):
         self.deque = deque()
         self.maxsize = maxsize
         self.ignore_maxsize = False
-        # change ignore_maxsize to extended_size (type int) instead of boolean to avoid queue getting too large
-        # when its appending but not popping?
 
     # add single element to end of queue, if full pop element from front
     def append(self, o):
@@ -29,7 +27,6 @@ class Myque(object):
     # add several elements to front of queue
     def extendleft(self, i):
         self.ignore_maxsize = True
-        #i.reverse()
         self.deque.extendleft(i)
 
     # remove from front of queue
