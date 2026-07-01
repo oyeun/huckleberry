@@ -4,17 +4,10 @@ import wave
 from io import BytesIO
 
 
-# TODO parameters:
-#   number of times to play (-1 infinite, default 1),
-#   pause in between repeats (ms, default 1000),
-#   delay start (ms, default 0, use time.sleep?)
-#   pass in default mute volume - make better name for mute (its not mute)
-class Stream(object):
-    def __init__(self, pa, source, key=None, default_volume=100):
+class AudioStream(object):
+    def __init__(self, pa, source, key=None, volume=100):
         self.done = False
-        # add input validation
-        self.default_volume = float(default_volume / 100)
-        self.volume = self.default_volume
+        self.volume = float(volume / 100)
         if isinstance(source, bytes):
             self.b = BytesIO(source)
             self.wf = wave.open(self.b, 'rb')
@@ -23,13 +16,18 @@ class Stream(object):
         self.stream = pa.open(format=pyaudio.get_format_from_width(self.wf.getsampwidth()),
                               channels=self.wf.getnchannels(),
                               rate=self.wf.getframerate(),
+                              input=False,
                               output=True,
+                              output_device_index=1,
+                              frames_per_buffer= 1024,
                               stream_callback=self.callback)
-        self.stream.start_stream()
 
     def callback(self, in_data, frame_count, time_info, status):
         if self.done:
-            return None, pyaudio.paComplete
+            if hasattr(self, 'b'):
+                self.b.close()
+            self.wf.close()
+            return None, pyaudio.paAbort
         data = self.wf.readframes(frame_count)
 
         # volume adjust
@@ -44,29 +42,26 @@ class Stream(object):
             if hasattr(self, 'b'):
                 self.b.close()
             self.wf.close()
-        return (data, pyaudio.paContinue)
+            return None, pyaudio.paComplete
+        return data, pyaudio.paContinue
 
     def is_active(self):
-        #return self.stream.is_active()
         return not self.done
 
-    def set_volume(self, volume):
-        # add input validation
-        self.volume = volume / 100
+    def set_volume(self, volume: int):
+        self.volume = float(volume / 100)
 
     def reset_volume(self):
         self.volume = self.default_volume
 
     def stop(self):
         self.done = True
-        pass
 
     def pause(self):
         self.stream.stop_stream()
 
     def resume(self):
         self.stream.start_stream()
-        pass
 
     def close(self):
         self.done = True

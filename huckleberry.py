@@ -1,278 +1,225 @@
 from collections import deque
-import pyaudio # http://people.csail.mit.edu/hubert/pyaudio/docs/
+import math
+import pyaudio
 import threading
 import time
-import yaml
-from scutils.log_factory import LogFactory
-
-import hound
-from signalers import signaler
-import vad
-import waker
-import hound_waker
-
-from myque import Myque
+import logging
+from client import hound
+from config import HuckleberryConfig, ActivationMethod
+from handler import houndify_handler
+from waker import hound_waker, vad, waker
+from util.myque import Myque
 
 
 class Huckleberry(object):
+  def __init__(self, config: HuckleberryConfig):
+    self.logger = logging.getLogger(__name__)
+    self.config = config
+    # states
+    self.is_running = self.is_done = self.skip_to_activate = self.is_buffer_paused = False
+    # audio processes
+    self.frame_buffer_thread = self.listener_thread = self.pyaudio = self.stream = None
 
-    def __init__(self, config_path):
-        # initialize logging
-        with open('logging.yml', 'r') as stream:
-            try:
-                logging_config = yaml.full_load(stream)
-                self.logger = LogFactory.get_instance(**logging_config)
-            except yaml.YAMLError as exc:
-                self.logger = LogFactory.get_instance(stdout=True)
-                self.logger.error('unable to load logging.yml config, using default stdout logger')
+    # initialize frame buffer
+    self.frame_buffer = Myque(maxsize=self.config.max_frames)
+    # initialize houndify
+    self.hound = hound.Hound(self.config.hound_config)
+    # initialize VAD
+    self.vad = vad.Vad(self.config.vad_config)
+    # initialize waker
+    if self.config.wakeword_config.wakeword.lower() in ['ok hound', 'okay hound']:
+      self.waker = hound_waker.HoundWaker(self.config.hound_config)
+    else:
+      self.waker = waker.Waker(self.config.wakeword_config)
+    # initialize response handler
+    self.handler = houndify_handler.HoundifyHandler(self.config.hound_config)
+    # activation method
+    if self.config.activation_method == ActivationMethod.WAKEWORD.value:
+      self.activation_loop = self.__kwd_loop
+    elif self.config.activation_method == ActivationMethod.VAD.value:
+      self.activation_loop = self.__vad_loop
+    elif self.config.activation_method == ActivationMethod.METHOD.value:
+      self.activation_loop = self.__conditional_loop
+    else:
+      raise ValueError('HuckleberryConfig.activation_method misconfigured')
 
-        # read config file
-        self.config = None
-        with open(config_path, 'r') as stream:
-            try:
-                self.config = yaml.full_load(stream)
-            except yaml.YAMLError as exc:
-                self.logger.error(exc)
-                return
+  def start(self):
+    if self.is_running:
+      self.logger.info('unable to start huckleberry, it is already running')
+      return
+    self.logger.info('starting huckleberry')
+    self.is_done = False
+    self.pyaudio = pyaudio.PyAudio()
+    self.stream = self.pyaudio.open(format=pyaudio.paInt16,
+                                    channels=self.config.audio_channels,
+                                    rate=self.config.audio_sample_rate,
+                                    input=True,
+                                    output=False,
+                                    frames_per_buffer=self.config.chunk_size,
+                                    input_device_index=self.config.input_device_index,
+                                    stream_callback=self.callback)
+    if not self.listener_thread:
+      self.listener_thread = threading.Thread(target=self.__listener_loop)
+      self.listener_thread.start()
+    self.is_running = True
+    self.logger.info('started huckleberry')
 
-        # states
-        self.done = False
-        self.skip_activation = False
-        self.buffer_paused = False
+  def callback(self, in_data, frame_count, time_info, status):
+    if self.is_done:
+      self.logger.debug('ending stream callback')
+      return None, pyaudio.paComplete
+    if not self.is_buffer_paused:
+      self.frame_buffer.append(in_data)
+    return None, pyaudio.paContinue
 
-        # audio processes
-        self.frame_buffer_thread = None
-        self.listener_thread = None
-        self.pyaudio = None
-        self.stream = None
+  def stop(self):
+    if not self.is_running:
+      self.logger.info('unable to stop huckleberry, it is not running')
+      return
+    self.logger.info('stopping huckleberry')
+    self.is_done = True
+    if self.frame_buffer_thread:
+      self.frame_buffer_thread.join()
+    if self.listener_thread:
+      self.listener_thread.join()
+      self.listener_thread = None
+    self.stream.stop_stream()
+    self.stream.close()
+    self.pyaudio.terminate()
+    self.handler.close()
+    self.is_running = False
+    self.logger.info('stopped huckleberry')
 
-        # audio configs
-        self.channels = 1 # mono, fixed
-        self.encoding = 16 # 16-bit, fixed
-        self.sample_rate = self.config['audio']['sample_rate'] # kHz
-        self.frame_duration = self.config['audio']['frame_duration'] # ms
-        self.chunk_size = self.encoding * self.frame_duration
-        frame_buffer_max_size = int(self.config['frame_buffer_size'] / self.frame_duration)
-        self.frame_buffer = Myque(maxsize=frame_buffer_max_size)
-        self.input_device_index = self.config['input_device_index'] if 'input_device_index' in self.config else None
+  def __frame_buffer_loop(self):
+    self.stream.start_stream()
+    while not self.is_done:
+      if not self.is_buffer_paused:
+        frame = self.stream.read(self.config.chunk_size, False)
+        self.frame_buffer.append(frame)
+      else:
+        time.sleep(0.1)
+    self.stream.stop_stream()
+    self.stream.close()
 
-        # other configs
-        self.activation_method = self.config['activation_method'].lower()
-        if self.activation_method not in ['wakeword', 'vad', 'method']:
-            raise Exception('invalid config: activation_method. must be [wakeword, vad, method]')
-        self.activate_on_wakeword = self.activation_method == 'wakeword'
-        self.activate_on_vad = self.activation_method == 'vad'
-        self.activate_on_method = self.activation_method == 'method'
-        if self.activate_on_wakeword:
-            self.vad_after_ww = self.config['vad_after_wakeword']
-            self.vad_after_ww_time = self.config['vad_after_wakeword_time']
-        self.start_sound = self.config['start_sound']
-        self.stop_sound = self.config['stop_sound']
+  def pause_input(self):
+    self.is_buffer_paused = True
 
-        # initialize houndify
-        self.hound = hound.Hound(self.config)
+  def resume_input(self):
+    self.is_buffer_paused = False
 
-        # initialize VAD
-        self.vad = vad.Vad(self.config)
+  def clear_buffer(self):
+    self.frame_buffer.clear()
 
-        # initialize waker
-        wakeword = self.config['wakeword'].lower()
-        if wakeword in ['ok hound', 'okay hound']:
-            self.waker = hound_waker.HoundWaker(self.config)
-        else:
-            self.waker = waker.Waker(self.config)
+  def load_buffer(self, frames):
+    self.frame_buffer.append(frames)
 
-        # initialize signaler
-        self.signaler = signaler.Signaler(self.config)
+  def __kwd_loop(self):
+    self.logger.debug('listening for wakephrase...')
+    keyword_detected = False
+    self.waker.start()
+    while not keyword_detected and not self.is_done and not self.skip_to_activate:
+      frame = self.frame_buffer.popleft()
+      if frame:
+       keyword_detected = self.waker.listen(frame)
+    if keyword_detected:
+      self.frame_buffer.appendleft(frame)
+      self.logger.debug('wakephrase detected')
+    self.waker.finish()
 
-    def start(self):
-        self.logger.info('starting huckleberry')
-        self.pyaudio = pyaudio.PyAudio()
-        self.stream = self.pyaudio.open(format=pyaudio.paInt16,
-                                        channels=self.channels,
-                                        rate=self.sample_rate,
-                                        input=True,
-                                        frames_per_buffer=self.chunk_size,
-                                        input_device_index=self.input_device_index)
-        if not self.frame_buffer_thread:
-            self.frame_buffer_thread = threading.Thread(target=self.__frame_buffer)
-            self.frame_buffer_thread.start()
-        if not self.listener_thread:
-            self.listener_thread = threading.Thread(target=self.__listener)
-            self.listener_thread.start()
-        else:
-            error_msg = 'unable to start huckleberry, it is already running'
-            self.logger.error(error_msg)
-            raise Exception(error_msg)
-        self.logger.info('started huckleberry')
+  def __conditional_loop(self):
+    self.logger.debug('waiting for activation...')
+    while not self.is_done and not self.skip_to_activate:
+      time.sleep(0.1)
+    self.logger.debug('activated')
 
-    def stop(self):
-        self.logger.info('stopping huckleberry')
-        self.done = True
-        if self.frame_buffer_thread:
-            self.frame_buffer_thread.join()
-        if self.listener_thread:
-            self.listener_thread.join()
-        self.stream.stop_stream()
-        self.stream.close()
-        self.pyaudio.terminate()
-        self.signaler.close()
-        self.logger.info('stopped huckleberry, goodbye!')
-
-    def __frame_buffer(self):
-        self.stream.start_stream()
-        while not self.done:
-            if not self.buffer_paused:
-                frame = self.stream.read(self.chunk_size, False)
-                self.frame_buffer.append(frame)
-        self.stream.stop_stream()
-        self.stream.close()
-
-    def pause_input(self):
-        self.buffer_paused = True
-
-    def resume_input(self):
-        self.buffer_paused = False
-
-    def clear_buffer(self):
-        self.frame_buffer.clear()
-
-    def load_buffer(self, frames):
-        self.frame_buffer.append(frames)
-
-    def __listener(self):
-        while not self.done:
-            self.logger.debug('starting new listener loop')
-            self.skip_activation = False
-            self.frame_buffer.clear()
-            if not self.done:
-                if self.activate_on_wakeword:
-                    self.__kwd_loop()
-                    self.activate()
-                    if self.vad_after_ww and not self.skip_activation:
-                        detected = self.__vad_loop(timeout=self.vad_after_ww_time)
-                        if not detected:
-                            self.deactivate()
-                            continue
-                elif self.activate_on_vad:
-                    self.__vad_loop()
-                    self.activate()
-                elif self.activate_on_method:
-                    while not self.done and not self.skip_activation:
-                        pass
-                    self.activate()
-                else:
-                    self.logger.error('not supposed to reach here...')
-                    self.done = True
-
-                if not self.done:
-                    response = self.__hound()
-                    self.deactivate()
-                    self.process(response)
-
-    def __kwd_loop(self):
-        self.logger.debug('listening for wakephrase...')
-        keyword_detected = False
-        self.waker.start()
-        while not keyword_detected and not self.done and not self.skip_activation:
-            frame = self.frame_buffer.popleft()
-            if frame:
-                keyword_detected = self.waker.listen(frame)
-        if keyword_detected:
-            self.frame_buffer.appendleft(frame)
-            self.logger.debug('wakephrase detected')
-        self.waker.finish()
-
-    def __vad_loop(self, timeout=0):
-        self.logger.debug('listening for voice activity...')
-        num_voice_frames = 0
-        max_queue_size = int(self.config['vad']['window'] / self.frame_duration)
-        vad_buffer = deque(maxlen=max_queue_size)
-        vad_detected = False
-
+  def __vad_loop(self, timeout=0):
+    self.logger.debug('listening for voice activity...')
+    max_queue_size = math.ceil(self.config.vad_config.window / self.config.frame_duration)
+    vad_buffer = deque(maxlen=max_queue_size)
+    vad_detected = False
+    max_iterations = math.ceil(timeout / self.config.frame_duration)
+    num_voice_frames = iteration = 0
+    while not vad_detected and not self.is_done and not self.skip_to_activate:
+      # when queue is full...
+      if len(vad_buffer) >= max_queue_size:
+        # ...break loop when voice activity is detected
+        if float(num_voice_frames) / float(max_queue_size) >= self.config.vad_config.min_pass_ratio:
+          vad_detected = True
+          break
+        # ...pop last frame from queue
+        old_frame = vad_buffer.popleft()
+        num_voice_frames -= old_frame['has_voice']
+      # pop frame from buffer, check for voice and add to queue
+      frame = self.frame_buffer.popleft()
+      if frame:
+        # break loop after timeout reached
         if timeout:
-            self.num_iterations = timeout / self.frame_duration
-        iteration = 0
+          iteration += 1
+          if iteration > max_iterations:
+            break
+        frame_has_voice = self.vad.listen(frame)
+        num_voice_frames += frame_has_voice
+        vad_buffer.append({'has_voice': frame_has_voice, 'frame': frame})
+    # post loop, return result
+    if vad_detected:
+      self.logger.debug('voice activity detected')
+      frames = [d['frame'] for d in reversed(vad_buffer)]
+      self.frame_buffer.extendleft(frames)
+    return vad_detected
 
-        while not vad_detected and not self.done and not self.skip_activation:
-            if len(vad_buffer) >= max_queue_size:
-                # queue full
-                if float(num_voice_frames) / float(max_queue_size) >= self.config['vad']['min_pass_ratio']:
-                    # queue contains sufficient voice, end loop
-                    vad_detected = True
-                    break
-                # dequeue
-                old_frame = vad_buffer.popleft()
-                if old_frame['vad']:
-                    num_voice_frames -= 1
-            # get frame
-            frame = self.frame_buffer.popleft()
-            if frame:
-                if timeout:
-                    iteration += 1
-                    if iteration > self.num_iterations:
-                        break
-                # check if frame contains voice
-                frame_has_voice = self.vad.listen(frame)
-                if frame_has_voice:
-                    num_voice_frames += 1
-                # append to queue
-                vad_buffer.append({'vad': frame_has_voice, 'frame': frame})
+  def __hound_loop(self):
+    self.logger.debug('sending to houndify...')
+    hound_finished = False
+    self.hound.start()
+    while not hound_finished and not self.is_done:
+      frame = self.frame_buffer.popleft()
+      if frame:
+        hound_finished = self.hound.listen(frame)
+    self.hound.finish()
+    self.logger.debug('houndify finished')
+    return self.hound.get_response()
 
-        if vad_detected:
-            self.logger.debug('voice activity detected')
-            frames = [d['frame'] for d in reversed(vad_buffer)]
-            self.frame_buffer.extendleft(frames)
-        return vad_detected
+  def __listener_loop(self):
+    while not self.is_done:
+      self.logger.debug('starting new listener loop')
+      self.skip_to_activate = False
+      self.frame_buffer.clear()
+      if not self.is_done:
+        self.activation_loop()
+        if not self.is_done:
+          self.handler.on_activate()
+          # secondary loop to cancel after no voice activity
+          if self.config.activation_method == ActivationMethod.WAKEWORD.value and self.config.wakeword_config.timeout_after_wakeword > 0 and not self.skip_to_activate:
+            detected = self.__vad_loop(timeout=self.config.wakeword_config.timeout_after_wakeword)
+            if not detected:
+              if not self.is_done:
+                self.handler.on_deactivate()
+              continue
+          response = self.__hound_loop()
+          if not self.is_done:
+            self.handler.on_deactivate()
+          self.handler.on_response(response)
 
-    def __hound(self):
-        self.logger.debug('sending to houndify...')
-        hound_finished = False
-        # message = None
-        self.hound.start()
-        while not hound_finished and not self.done:
-            frame = self.frame_buffer.popleft()
-            if frame:
-                hound_finished = self.hound.listen(frame)
-                # if message != self.hound.response()['message']:
-                #     message = self.hound.response()['message']
-                #     self.logger.debug(message)
-        self.hound.finish()
-        self.logger.debug('houndify finished')
-        return self.hound.response()
+  # activate hound, if WAKEWORD or VAD mode, will skip loops and start hound immediately
+  def activate_hound(self):
+    self.logger.debug('houndify manually activated')
+    if self.is_running:
+      self.skip_to_activate = True
+    else:
+      self.logger.debug('unable to activate, huckleberry os not running')
 
-    # activate hound, skipping wake phrase and vad
-    def activate_hound(self):
-        self.logger.debug('houndify manually activated')
-        if self.listener_thread:
-            self.skip_activation = True
-        else:
-            self.logger.debug('not started, call start() first')
+  def text_hound(self, query):
+    self.logger.debug('sending text to textclient')
+    response = self.hound.text(query)
+    self.handler.on_response(response)
 
-    def activate(self):
-        if not self.done:
-            self.signaler.activate()
-
-    def deactivate(self):
-        if not self.done:
-            self.signaler.deactivate()
-
-    def process(self, response):
-        self.signaler.process(response)
-
-    def status(self):
-        status = {
-            'status': {
-                'done': self.done,
-                'frameBufferSize': self.frame_buffer.size()
-            }
-        }
-        self.logger.debug(status)
-        return status
-
-
-if __name__ == '__main__':
-    huckle = Huckleberry('config.yml')
-    huckle.start()
-    time.sleep(60)
-    huckle.stop()
+  def status(self):
+    status = {
+      'status': {
+        'done': self.is_done,
+        'running': self.is_running,
+        'frameBufferSize': self.frame_buffer.size()
+      }
+    }
+    self.logger.debug(status)
+    return status

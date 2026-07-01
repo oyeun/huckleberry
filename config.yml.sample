@@ -1,56 +1,25 @@
-activation_method: wakeword # wakeword | vad | method
-
-wakeword: 'ok hound'
-vad_after_wakeword: True
-vad_after_wakeword_time: 5000 # ms
-
-start_sound: 'sounds/hound_start.wav'
-stop_sound: 'sounds/hound_stop.wav'
-
-houndify:
-  primary_client:
-    client_id: need
-    client_key: this
-    user: huckleberry
-  tts_client:
-    client_id: need
-    client_key: this
-    user: huckleberry
-
-hound_client:
-  user: scooby
-  Latitude: 37.388309
-  Longitude: -121.973968
-  TimeZone: America/Los_Angeles
-
-waker:
-  pocketsphinx:
-    kws_threshold: 1e-5
-    logfn: /dev/null
-
-vad:
-  sensitivity: 3 # 0-3, high to low sensitivity
-
-  # method 1
-  window: 1000 # last x milliseconds of stream to check for voice activity
-  min_pass_ratio: 0.5 # percentage of window that needs to be voice to pass vad
-
-  # method 2 NOT USED, WHERE DID THIS CODE GO?
-  max_silence: 100 # maximum continuous silence allowed once voice detected
-                   # and collection begins, afterwards the process will reset.
-                   # milliseconds
-  min_voice_active: 500 # once voice has been detected, this is the minimum
-                        # amount of time needed to have elapsed without
-                        # having max_silence occur to pass vad.
-                        # milliseconds
-
-# pocketsphinx requires 8/16kHz 16bit mono little-endian
-# houndify requires 8/16kHz 16bit mono little-endian
-# webrtcvad requires 8/16/32/48 kHz 16bit mono PCM audio, 10/20/30ms frames
-# since all modules require mono and 16bit encoding, channels and encoding will not be
-# configurable and hardcoded with values 1 and 16 respectively
-audio:
-  sample_rate: 16000 # 8000/16000kHz
-  frame_duration: 30 # 10/20/30ms - seems to work best at 30, kws doesnt work well at 10/20
-
-frame_buffer_size: 3000 # ms
+input_device_index: 0
+activation_method: wakeword
+audio_sample_rate: 16000
+frame_duration: 30
+frame_buffer_size: 3000
+vad_config:
+  sensitivity: 3
+  window: 1000
+  min_pass_ratio: 0.5
+wakeword_config:
+  wakeword: 'ok hound'
+  timeout_after_wakeword: 5000
+  kws_threshold: 1e-5
+hound_config:
+  client_id: <client_id>
+  client_key: <client_key>
+  user: <user>
+  start_sound: 'sounds/hound_start.wav'
+  stop_sound: 'sounds/hound_stop.wav'
+  request_info:
+    Latitude: <latitude>
+    Longitude: <longitude>
+    TimeZone: America/Los_Angeles
+    ResponseAudioShortOrLong: Long
+    ResponseAudioVoice: QueenElizabeth

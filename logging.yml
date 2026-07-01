@@ -1,12 +1,26 @@
-# mostly default values from scutils LogFactory
-# https://scrapy-cluster.readthedocs.io/en/latest/topics/utils/logfactory.html
-json: False
-stdout: True
-name: 'huckleberry'
-dir: './logs'
-file: 'main.log'
-bytes: 25000000
-backups: 5
-level: 'INFO'
-format: '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
-propagate: False
+version: 1
+disable_existing_loggers: False
+
+formatters:
+  standard:
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  simple:
+    format: "%(levelname)s - %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: simple
+    stream: ext://sys.stdout
+
+  file:
+    class: logging.FileHandler
+    level: INFO
+    formatter: standard
+    filename: ./logs/main.log
+    mode: a
+
+root:
+  level: DEBUG
+  handlers: [console, file]
