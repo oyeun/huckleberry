@@ -4,35 +4,39 @@ import pyaudio
 import threading
 import time
 import logging
-from client import hound
-from config import HuckleberryConfig, ActivationMethod
-from handler import houndify_handler
-from waker import hound_waker, vad, waker
-from util.myque import Myque
+from .client import Hound
+from .config import HuckleberryConfig, ActivationMethod
+from .handler import houndify_handler
+from .waker import Vad, Wakeword
+from .util.myque import Myque
 
 
 class Huckleberry(object):
-  def __init__(self, config: HuckleberryConfig):
+  def __init__(self, config: HuckleberryConfig, handler=None):
     self.logger = logging.getLogger(__name__)
     self.config = config
     # states
     self.is_running = self.is_done = self.skip_to_activate = self.is_buffer_paused = False
     # audio processes
     self.frame_buffer_thread = self.listener_thread = self.pyaudio = self.stream = None
-
     # initialize frame buffer
     self.frame_buffer = Myque(maxsize=self.config.max_frames)
     # initialize houndify
-    self.hound = hound.Hound(self.config.hound_config)
+    self.hound = Hound(self.config.hound_config)
     # initialize VAD
-    self.vad = vad.Vad(self.config.vad_config)
+    self.vad = Vad(self.config.vad_config)
     # initialize waker
-    if self.config.wakeword_config.wakeword.lower() in ['ok hound', 'okay hound']:
-      self.waker = hound_waker.HoundWaker(self.config.hound_config)
-    else:
-      self.waker = waker.Waker(self.config.wakeword_config)
+    # temporarily disabled the OkHound wakeword because the package is not installing successfully on some Raspberry Pi installations
+    #if self.config.wakeword_config.wakeword.lower() in ['ok hound', 'okay hound']:
+    #  self.wakeword = OkHound(self.config.hound_config)
+    #else:
+    self.wakeword = Wakeword(self.config.wakeword_config)
     # initialize response handler
-    self.handler = houndify_handler.HoundifyHandler(self.config.hound_config)
+    if not handler:
+      # default handler
+      self.handler = houndify_handler.HoundifyHandler(self.config.houndify_handler_config)
+    else:
+      self.handler = handler
     # activation method
     if self.config.activation_method == ActivationMethod.WAKEWORD.value:
       self.activation_loop = self.__kwd_loop
@@ -90,17 +94,6 @@ class Huckleberry(object):
     self.is_running = False
     self.logger.info('stopped huckleberry')
 
-  def __frame_buffer_loop(self):
-    self.stream.start_stream()
-    while not self.is_done:
-      if not self.is_buffer_paused:
-        frame = self.stream.read(self.config.chunk_size, False)
-        self.frame_buffer.append(frame)
-      else:
-        time.sleep(0.1)
-    self.stream.stop_stream()
-    self.stream.close()
-
   def pause_input(self):
     self.is_buffer_paused = True
 
@@ -116,15 +109,15 @@ class Huckleberry(object):
   def __kwd_loop(self):
     self.logger.debug('listening for wakephrase...')
     keyword_detected = False
-    self.waker.start()
+    self.wakeword.start()
     while not keyword_detected and not self.is_done and not self.skip_to_activate:
       frame = self.frame_buffer.popleft()
       if frame:
-       keyword_detected = self.waker.listen(frame)
+       keyword_detected = self.wakeword.listen(frame)
     if keyword_detected:
       self.frame_buffer.appendleft(frame)
       self.logger.debug('wakephrase detected')
-    self.waker.finish()
+    self.wakeword.finish()
 
   def __conditional_loop(self):
     self.logger.debug('waiting for activation...')
@@ -132,6 +125,9 @@ class Huckleberry(object):
       time.sleep(0.1)
     self.logger.debug('activated')
 
+  # vad (voice activity detection) monitors a window of audio input, analyzing each incoming frame for voice activity and
+  # keeping track of the total number. once a threshold is reached (min_pass_ratio), or when timeout is specified and has
+  # elapsed, the loop will break
   def __vad_loop(self, timeout=0):
     self.logger.debug('listening for voice activity...')
     max_queue_size = math.ceil(self.config.vad_config.window / self.config.frame_duration)
@@ -200,7 +196,7 @@ class Huckleberry(object):
             self.handler.on_deactivate()
           self.handler.on_response(response)
 
-  # activate hound, if WAKEWORD or VAD mode, will skip loops and start hound immediately
+  # triggers hound immediately, skipping the wakeword or vad step
   def activate_hound(self):
     self.logger.debug('houndify manually activated')
     if self.is_running:
@@ -208,12 +204,14 @@ class Huckleberry(object):
     else:
       self.logger.debug('unable to activate, huckleberry os not running')
 
+  # sends a text command to hound
   def text_hound(self, query):
     self.logger.debug('sending text to textclient')
     response = self.hound.text(query)
     self.handler.on_response(response)
 
   def status(self):
+    # add more info
     status = {
       'status': {
         'done': self.is_done,
@@ -221,5 +219,4 @@ class Huckleberry(object):
         'frameBufferSize': self.frame_buffer.size()
       }
     }
-    self.logger.debug(status)
     return status

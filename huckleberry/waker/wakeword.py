@@ -1,9 +1,9 @@
 import os
-from config import WakewordConfig
+from ..config import WakewordConfig
 from pocketsphinx import Decoder, get_model_path
 
 
-class Waker(object):
+class Wakeword(object):
   def __init__(self, config: WakewordConfig):
     self.decoder_config = Decoder.default_config()
     self.decoder_config.set_string('-keyphrase', config.wakeword)

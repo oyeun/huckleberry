@@ -1,4 +1,4 @@
-from config import VadConfig
+from ..config import VadConfig
 from _webrtcvad import Error
 import webrtcvad
 

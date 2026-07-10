@@ -1,9 +1,9 @@
 import logging
 import okhound
-from config import HoundConfig
+from ..config import HoundConfig
 
 
-class HoundWaker(object):
+class OkHound(object):
   def __init__(self, config: HoundConfig):
     self.logger = logging.getLogger(__name__)
     okhound.setThreshold(0.4)

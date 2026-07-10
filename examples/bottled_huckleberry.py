@@ -5,7 +5,7 @@ from bottle import Bottle, request, response
 import logging
 import logging.config
 from huckleberry import Huckleberry
-from config import HuckleberryConfig
+from huckleberry.config import HuckleberryConfig
 
 
 class BottledHuckleberry(Bottle):
@@ -14,13 +14,13 @@ class BottledHuckleberry(Bottle):
     super().__init__()
 
     # initialize logging
-    with open('logging.yml', 'r') as f:
+    with open('examples/logging.yml', 'r') as f:
       log_config = yaml.safe_load(f)
       logging.config.dictConfig(log_config)
     self.logger = logging.getLogger(__name__)
 
     # read config file
-    with open('config.yml', 'r') as f:
+    with open('examples/config.yml', 'r') as f:
       try:
         huckleberry_config = yaml.safe_load(f)
       except yaml.YAMLError as exc:
@@ -67,7 +67,7 @@ class BottledHuckleberry(Bottle):
   def load_wav(self):
     input_wav = BytesIO(request.body.read())
 
-    if not self.huckleberry and not self.huckleberry.is_running:
+    if not self.huckleberry or not self.huckleberry.is_running:
       return 'not running'
 
     with wave.open(input_wav, 'rb') as audio:
@@ -95,7 +95,7 @@ class BottledHuckleberry(Bottle):
   def text(self):
     query = request.forms.get('query')
     self.huckleberry.text_hound(query)
-    return 'sent'
+    return f"sent {query}"
 
 if __name__ == '__main__':
   bh = BottledHuckleberry()

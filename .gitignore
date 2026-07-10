@@ -1,3 +1,7 @@
 logs/
 old/
-config.yml
+examples/config.yml
+.DS_Store
+.idea
+__pycache__
+huckleberry.egg-info

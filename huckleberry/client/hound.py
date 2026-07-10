@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 from houndify import houndify
-from config import HoundConfig
+from ..config import HoundConfig
 
 
 class Hound(object):

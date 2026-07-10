@@ -15,11 +15,12 @@ hound_config:
   client_id: <client_id>
   client_key: <client_key>
   user: <user>
-  start_sound: 'sounds/hound_start.wav'
-  stop_sound: 'sounds/hound_stop.wav'
   request_info:
     Latitude: <latitude>
     Longitude: <longitude>
     TimeZone: America/Los_Angeles
     ResponseAudioShortOrLong: Long
     ResponseAudioVoice: QueenElizabeth
+houndify_handler_config:
+  start_sound: 'examples/sounds/hound_start.wav'
+  stop_sound: 'examples/sounds/hound_stop.wav'

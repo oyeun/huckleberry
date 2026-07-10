@@ -7,7 +7,3 @@ PyAudio
 setuptools<82
 webrtcvad
 wheel
-
-# reqs for bottled huckleberry example:
-PyYAML
-bottle
