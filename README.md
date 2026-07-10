@@ -77,6 +77,10 @@ Write your own handler to handle responses and perform logic or route accordingl
 
 Check out the `examples` subdirectory for sample code.
 
+Here is a demo of Huckleberry running on my Raspberry Pi 3:
+
+https://github.com/user-attachments/assets/2ad86a31-038d-454f-886f-53ee7a64fc09
+
 ## Next Steps
 
 - Clean up the code™
