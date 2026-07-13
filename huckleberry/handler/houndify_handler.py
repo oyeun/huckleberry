@@ -5,6 +5,16 @@ from ..config import HoundifyHandlerConfig
 
 
 class HoundifyHandler(object):
+  """
+  HoundifyHandler - example handler class
+
+  Handler should implement on_activate(), on_deactivate(), on_response(), and close()
+
+  on_activate() - what to do when Huckleberry is activated (user has spoken wakeword and activated Huckleberry)
+  on_deactivate() - what to do when Huckleberry is deactivated (user has finished speaking)
+  on_response() - what to do with the Houndify response, see (https://www.houndify.com/docs#server-response)
+  close() - called when Huckleberry is stopped, clean up your active processes here
+  """
   def __init__(self, config: HoundifyHandlerConfig):
     self.logger = logging.getLogger(__name__)
     self.audio_manager = AudioManager(output_device_index=config.output_device_index, frames_per_buffer=config.frames_per_buffer)

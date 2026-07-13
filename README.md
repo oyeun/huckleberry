@@ -53,21 +53,26 @@ pip install -e .
 from huckleberry import Huckleberry
 from huckleberry.config import HuckleberryConfig
 
-# configure your client, you can use a dict or instantiate the config class directly
+# write and configure your response handler class - implement on_activate(), on_deactivate(), on_response(response), and close()
+# see handler/houndify_handler.py for example
+from myhandler import MyHandler
+
+# configure Huckleberry, you can use a dict or instantiate the config class directly
+# see config/config.py for configurations
 dict_config = {...}
 
-# write and configure your response handler
+# instantiate your handler
 handler = MyHandler(...)
 
 # instantiate Huckleberry
 huckleberry = Huckleberry(HuckleberryConfig(**dict_config), handler)
 
-# start process (non-blocking)
+# start Huckleberry (non-blocking)
 huckleberry.start()
 
-# do your stuff
+# do your stuff. huckleberry is running in a thread and will be activated by wakeword, and your handler will process the response from Houndify
 
-# to stop huckleberry, call:
+# to stop Huckleberry, call:
 huckleberry.stop()
 ```
 
@@ -84,6 +89,7 @@ https://github.com/user-attachments/assets/2ad86a31-038d-454f-886f-53ee7a64fc09
 ## Next Steps
 
 - Clean up the code™
+- Documentation
 - More examples
 - Create tools to manage Houndify custom commands
 - Decouple Houndify from Huckleberry and add support for other voice platforms
